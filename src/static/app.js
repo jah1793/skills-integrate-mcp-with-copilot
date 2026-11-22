@@ -3,6 +3,25 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const signupContainer = document.getElementById("signup-container");
+  const authButton = document.getElementById("auth-button");
+  const loginDialog = document.getElementById("login-dialog");
+  const loginForm = document.getElementById("login-form");
+  const loginError = document.getElementById("login-error");
+  let teacherAuthorization = null;
+
+  function makeAuthorizationHeader(username, password) {
+    const bytes = new TextEncoder().encode(`${username}:${password}`);
+    const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+    return `Basic ${btoa(binary)}`;
+  }
+
+  function updateAuthenticationUI() {
+    const isTeacher = teacherAuthorization !== null;
+    authButton.textContent = isTeacher ? "👤 Log out" : "👤 Teacher login";
+    signupContainer.classList.toggle("hidden", !isTeacher);
+    fetchActivities();
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -12,6 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.replaceChildren(new Option("-- Select an activity --", ""));
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -30,7 +50,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${details.participants
                   .map(
                     (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                      `<li><span class="participant-email">${email}</span>${
+                        teacherAuthorization
+                          ? `<button class="delete-btn" data-activity="${name}" data-email="${email}" aria-label="Unregister ${email} from ${name}">❌</button>`
+                          : ""
+                      }</li>`
                   )
                   .join("")}
               </ul>
@@ -80,6 +104,7 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/unregister?email=${encodeURIComponent(email)}`,
         {
           method: "DELETE",
+          headers: { Authorization: teacherAuthorization },
         }
       );
 
@@ -124,6 +149,7 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          headers: { Authorization: teacherAuthorization },
         }
       );
 
@@ -152,6 +178,51 @@ document.addEventListener("DOMContentLoaded", () => {
       messageDiv.className = "error";
       messageDiv.classList.remove("hidden");
       console.error("Error signing up:", error);
+    }
+  });
+
+  authButton.addEventListener("click", () => {
+    if (teacherAuthorization) {
+      teacherAuthorization = null;
+      updateAuthenticationUI();
+      return;
+    }
+
+    loginError.classList.add("hidden");
+    loginDialog.showModal();
+  });
+
+  document.getElementById("cancel-login").addEventListener("click", () => {
+    loginDialog.close();
+  });
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+    const authorization = makeAuthorizationHeader(username, password);
+
+    try {
+      const response = await fetch("/auth/verify", {
+        method: "POST",
+        headers: { Authorization: authorization },
+      });
+
+      if (!response.ok) {
+        const result = await response.json();
+        loginError.textContent = result.detail || "Unable to log in.";
+        loginError.classList.remove("hidden");
+        return;
+      }
+
+      teacherAuthorization = authorization;
+      loginForm.reset();
+      loginDialog.close();
+      updateAuthenticationUI();
+    } catch (error) {
+      loginError.textContent = "Unable to contact the server. Please try again.";
+      loginError.classList.remove("hidden");
+      console.error("Error logging in:", error);
     }
   });
 
