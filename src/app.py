@@ -5,14 +5,17 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+import hmac
+import os
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
-import os
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pathlib import Path
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
+teacher_auth = HTTPBasic(auto_error=False)
 
 # Mount the static files directory
 current_dir = Path(__file__).parent
@@ -78,6 +81,40 @@ activities = {
 }
 
 
+def authenticate_teacher(
+    credentials: HTTPBasicCredentials | None = Depends(teacher_auth),
+):
+    """Require the configured teacher account for activity changes."""
+    username = os.environ.get("TEACHER_USERNAME")
+    password = os.environ.get("TEACHER_PASSWORD")
+    if not username or not password:
+        raise HTTPException(
+            status_code=503,
+            detail="Teacher login is not configured on the server",
+        )
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Teacher login required",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    username_matches = hmac.compare_digest(
+        credentials.username.encode("utf-8"), username.encode("utf-8")
+    )
+    password_matches = hmac.compare_digest(
+        credentials.password.encode("utf-8"), password.encode("utf-8")
+    )
+    if not (username_matches and password_matches):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid teacher credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return True
+
+
 @app.get("/")
 def root():
     return RedirectResponse(url="/static/index.html")
@@ -88,8 +125,17 @@ def get_activities():
     return activities
 
 
+@app.post("/auth/verify")
+def verify_teacher(_: bool = Depends(authenticate_teacher)):
+    return {"authenticated": True}
+
+
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(
+    activity_name: str,
+    email: str,
+    _: bool = Depends(authenticate_teacher),
+):
     """Sign up a student for an activity"""
     # Validate activity exists
     if activity_name not in activities:
@@ -111,7 +157,11 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(
+    activity_name: str,
+    email: str,
+    _: bool = Depends(authenticate_teacher),
+):
     """Unregister a student from an activity"""
     # Validate activity exists
     if activity_name not in activities:
